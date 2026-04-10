@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  # ── API + Telegram Bot + Scheduler ──────────────────────────────
+  connor-claw:
+    build: .
+    container_name: connor-claw
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    command: python main.py all
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── Telegram Bot only (standalone mode) ─────────────────────────
+  telegram-bot:
+    build: .
+    container_name: connor-claw-telegram
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    command: python main.py telegram
+    profiles:
+      - telegram-only
+
+  # ── API only (webhook receiver) ──────────────────────────────────
+  api:
+    build: .
+    container_name: connor-claw-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    command: python main.py api
+    profiles:
+      - api-only
