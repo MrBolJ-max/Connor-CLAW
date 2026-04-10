@@ -5,7 +5,7 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # Claude / Anthropic
-    anthropic_api_key: str = Field(..., env="ANTHROPIC_API_KEY")
+    anthropic_api_key: str = Field("", env="ANTHROPIC_API_KEY")
     claude_model: str = Field("claude-opus-4-6", env="CLAUDE_MODEL")
 
     # Telegram

@@ -12,9 +12,11 @@ class ClaudeClient:
     """
 
     def __init__(self):
-        self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key) if settings.anthropic_api_key else None
         self.model = settings.claude_model
         self.total_tokens_used = 0
+        if not settings.anthropic_api_key:
+            logger.warning("ANTHROPIC_API_KEY not set — Claude features disabled")
 
     @retry(
         stop=stop_after_attempt(3),
@@ -28,6 +30,8 @@ class ClaudeClient:
         temperature: float = 0.7,
     ) -> str:
         """Single-turn chat with Claude."""
+        if not self.client:
+            return "⚠️ Claude not configured — add ANTHROPIC_API_KEY to .env"
         response = self.client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
@@ -54,6 +58,8 @@ class ClaudeClient:
         temperature: float = 0.7,
     ) -> str:
         """Multi-turn conversation with message history."""
+        if not self.client:
+            return "⚠️ Claude not configured — add ANTHROPIC_API_KEY to .env"
         response = self.client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
