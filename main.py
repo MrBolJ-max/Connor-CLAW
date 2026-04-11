@@ -4,11 +4,16 @@ AI Workforce Platform
 
 Entry point. Starts:
   - FastAPI server (webhooks, API)
-  - Telegram bot (polling)
+  - Telegram bot (polling or webhook mode)
   - APScheduler (automated reports)
+
+Deployment modes:
+  - Local / Railway:  python main.py all   (polling + API + scheduler)
+  - Vercel:           ASGI app exported as `app` (webhook mode for Telegram)
 """
 
 import asyncio
+import os
 import sys
 from contextlib import asynccontextmanager
 from loguru import logger
@@ -28,12 +33,18 @@ logger.add(
     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan> - <level>{message}</level>",
     level=settings.log_level,
 )
-logger.add(
-    "data/logs/synsystems_{time:YYYY-MM-DD}.log",
-    rotation="1 day",
-    retention="30 days",
-    level="DEBUG",
-)
+# File logging only when not on Vercel (read-only filesystem)
+if not os.environ.get("VERCEL"):
+    try:
+        os.makedirs("data/logs", exist_ok=True)
+        logger.add(
+            "data/logs/synsystems_{time:YYYY-MM-DD}.log",
+            rotation="1 day",
+            retention="30 days",
+            level="DEBUG",
+        )
+    except Exception:
+        pass
 
 
 # ── App Lifespan ──────────────────────────────────────────────────
@@ -41,15 +52,20 @@ logger.add(
 async def lifespan(app: FastAPI):
     logger.info("=== SYN Systems — Connor-CLAW Starting ===")
 
-    # Start scheduler
-    scheduler = setup_scheduler()
-    scheduler.start()
-    logger.info("Scheduler started")
+    # Scheduler only runs on persistent deployments (Railway, local)
+    # Vercel is serverless — no persistent process for cron jobs
+    scheduler = None
+    if not os.environ.get("VERCEL"):
+        scheduler = setup_scheduler()
+        scheduler.start()
+        logger.info("Scheduler started")
+    else:
+        logger.info("Vercel mode — scheduler disabled (use Vercel Cron or Railway for reports)")
 
     yield
 
-    # Shutdown
-    scheduler.shutdown(wait=False)
+    if scheduler:
+        scheduler.shutdown(wait=False)
     logger.info("=== SYN Systems — Shutting Down ===")
 
 
@@ -174,7 +190,39 @@ async def get_weekly_report():
     }
 
 
-# ── Telegram Bot (separate process) ──────────────────────────────
+# ── Telegram Webhook (Vercel / serverless mode) ───────────────────
+_telegram_app = None
+
+async def _get_telegram_app():
+    """Lazy-init the Telegram Application for webhook mode."""
+    global _telegram_app
+    if _telegram_app is None:
+        from integrations.telegram_bot import build_app
+        _telegram_app = build_app()
+        await _telegram_app.initialize()
+    return _telegram_app
+
+
+@app.post("/webhook/telegram")
+async def telegram_webhook(request: Request):
+    """
+    Telegram sends updates here when running in webhook mode (Vercel).
+    Set the webhook via:
+      https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<your-vercel-url>/webhook/telegram
+    """
+    try:
+        from telegram import Update
+        data = await request.json()
+        tg_app = await _get_telegram_app()
+        update = Update.de_json(data, tg_app.bot)
+        await tg_app.process_update(update)
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Telegram webhook error: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+# ── Telegram Bot (separate process — polling mode) ────────────────
 def run_telegram_bot():
     """Run the Telegram bot in polling mode (separate from FastAPI)."""
     from integrations.telegram_bot import build_app
